@@ -1,0 +1,47 @@
+name = "example"
+env_file = "./.env.workflows.example"
+
+[[workflow]]
+name = "conditions-check"
+context = "."
+instructions = """
+FROM busybox:latest
+
+RUN echo "Conditions Check Passes"
+"""
+
+[[workflow]]
+name = "extract"
+context = "."
+depends_on = []
+instructions = "./1.extract.Containerfile"
+
+[[workflow]]
+name = "transform"
+context = "."
+depends_on = ["extract"]
+instructions = "./2.transform.Containerfile"
+
+[[workflow]]
+name = "validate"
+context = "."
+depends_on = ["transform"]
+instructions = "./3.validate.Containerfile"
+
+[[workflow]]
+name = "publish"
+context = "."
+depends_on = ["validate"]
+env = ["FOO=bar"]
+command = ["sh", "-c", "echo Publishing with $FOO"]
+instructions = "./4.publish.Containerfile"
+
+[[workflow]]
+name = "smoke-test"
+context = "."
+depends_on = ["publish"]
+instructions = """
+FROM busybox:latest
+
+RUN echo "Smoke test successfully completed, exiting"
+"""

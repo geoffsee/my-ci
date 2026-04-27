@@ -1,0 +1,27 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+jobs:
+  test-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Setup Rust
+        run: rustup update stable && rustup default stable
+
+      - run: cargo test
