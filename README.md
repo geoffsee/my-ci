@@ -1,5 +1,8 @@
 # my-ci
 
+<img src="./my-ci.png" alt="my-ci" width="75%">
+
+
 Run local CI/CD workflows over an OCI socket (Docker or Podman).
 
 ## Demo
