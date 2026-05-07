@@ -1,7 +1,9 @@
 mod build;
 mod cli;
 mod config;
+mod events;
 mod graph;
+mod gui;
 mod init;
 mod oci;
 mod run;
@@ -13,6 +15,7 @@ use crate::build::build_workflow;
 use crate::cli::{Cli, Commands};
 use crate::config::{get_workflow, load_config};
 use crate::graph::{resolve_build_plan, topological_order};
+use crate::gui::serve_gui;
 use crate::init::scaffold_init;
 use crate::oci::{OciProvider, connect_oci, detect_oci_provider, get_oci_socket_addr};
 use crate::run::run_workflow;
@@ -70,6 +73,9 @@ async fn main() -> Result<()> {
             for wf in &config.workflow {
                 println!("{}", wf.name);
             }
+        }
+        Commands::Gui { host, port } => {
+            serve_gui(host, port, config, oci_provider).await?;
         }
         Commands::Init { .. } => unreachable!("init handled before config load"),
     }

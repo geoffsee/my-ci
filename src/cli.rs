@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -20,6 +21,13 @@ pub enum Commands {
     Run { workflow: Option<String> },
     /// List workflow names from config.
     List,
+    /// Serve a browser GUI with realtime pipeline status and controls.
+    Gui {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: IpAddr,
+        #[arg(short, long, default_value_t = 7878)]
+        port: u16,
+    },
     /// Scaffold the bundled my-ci/ template into the target directory (default: ./my-ci).
     Init {
         #[arg(default_value = "my-ci")]
@@ -83,5 +91,17 @@ mod tests {
     fn config_default_is_my_ci_workflows_toml() {
         let cli = Cli::try_parse_from(["my-ci", "list"]).unwrap();
         assert_eq!(cli.config, PathBuf::from("my-ci/workflows.toml"));
+    }
+
+    #[test]
+    fn gui_defaults_to_localhost_port() {
+        let cli = Cli::try_parse_from(["my-ci", "gui"]).unwrap();
+        match cli.command {
+            Commands::Gui { host, port } => {
+                assert_eq!(host, "127.0.0.1".parse::<IpAddr>().unwrap());
+                assert_eq!(port, 7878);
+            }
+            other => panic!("expected Gui, got {other:?}"),
+        }
     }
 }

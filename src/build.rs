@@ -11,15 +11,41 @@ use tar::{Builder, Header};
 use walkdir::WalkDir;
 
 use crate::config::{WorkflowConfig, WorkflowFile, image_tag, normalize_context};
+use crate::events::{PipelineEvent, WorkflowPhase, WorkflowStatus};
 
 pub async fn build_workflow(
     docker: &Docker,
     config: &WorkflowFile,
     wf: &WorkflowConfig,
 ) -> Result<()> {
+    build_workflow_with_events(docker, config, wf, |event| {
+        if let PipelineEvent {
+            kind: crate::events::EventKind::Log,
+            message,
+            ..
+        } = event
+        {
+            print!("{message}");
+        }
+    })
+    .await
+}
+
+pub async fn build_workflow_with_events(
+    docker: &Docker,
+    config: &WorkflowFile,
+    wf: &WorkflowConfig,
+    emit: impl Fn(PipelineEvent),
+) -> Result<()> {
     let context = normalize_context(&wf.context);
     let image_tag = image_tag(config, wf);
     println!("Building '{}' from {}", wf.name, context.display());
+    emit(PipelineEvent::workflow(
+        wf.name.clone(),
+        WorkflowPhase::Build,
+        WorkflowStatus::Running,
+        format!("Building from {}", context.display()),
+    ));
 
     let tar_path = write_temp_build_context(&context, &wf.instructions)?;
     let archive_bytes = std::fs::read(&tar_path)
@@ -39,14 +65,29 @@ pub async fn build_workflow(
     while let Some(item) = output.next().await {
         let chunk = item.context("docker build stream failed")?;
         if let Some(error) = chunk.error {
+            emit(PipelineEvent::error(
+                wf.name.clone(),
+                WorkflowPhase::Build,
+                error.clone(),
+            ));
             bail!("build failed for '{}': {error}", wf.name);
         }
         if let Some(stream) = chunk.stream {
-            print!("{stream}");
+            emit(PipelineEvent::log(
+                wf.name.clone(),
+                WorkflowPhase::Build,
+                stream.clone(),
+            ));
         }
     }
 
     std::fs::remove_file(&tar_path).ok();
+    emit(PipelineEvent::workflow(
+        wf.name.clone(),
+        WorkflowPhase::Build,
+        WorkflowStatus::Succeeded,
+        format!("Built {image_tag}"),
+    ));
     Ok(())
 }
 
@@ -65,7 +106,9 @@ fn write_temp_build_context(context: &Path, dockerfile: &str) -> Result<PathBuf>
     let mut builder = Builder::new(tar_file);
     append_directory_to_tar(context, &mut builder)?;
     append_virtual_file(&mut builder, "Dockerfile", dockerfile.as_bytes())?;
-    builder.finish().context("failed to finalize build archive")?;
+    builder
+        .finish()
+        .context("failed to finalize build archive")?;
     Ok(archive_path)
 }
 

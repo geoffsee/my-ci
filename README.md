@@ -2,6 +2,20 @@
 
 Run local CI/CD workflows over an OCI socket (Docker or Podman).
 
+## Demo
+
+```sh
+git clone https://github.com/geoffsee/my-ci.git
+cd my-ci
+cd ui
+npm install
+npm run build
+cd ..
+cargo run -- gui --port 7878
+```
+
+Then open `http://127.0.0.1:7878`, click `Run`, and watch the pipeline execute in realtime.
+
 ## Install
 
 ```sh

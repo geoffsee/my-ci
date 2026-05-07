@@ -8,11 +8,31 @@ use bollard::models::HostConfig;
 use futures_util::StreamExt;
 
 use crate::config::{WorkflowConfig, WorkflowFile, image_tag};
+use crate::events::{PipelineEvent, WorkflowPhase, WorkflowStatus};
 
 pub async fn run_workflow(
     docker: &Docker,
     config: &WorkflowFile,
     wf: &WorkflowConfig,
+) -> Result<()> {
+    run_workflow_with_events(docker, config, wf, |event| {
+        if let PipelineEvent {
+            kind: crate::events::EventKind::Log,
+            message,
+            ..
+        } = event
+        {
+            print!("{message}");
+        }
+    })
+    .await
+}
+
+pub async fn run_workflow_with_events(
+    docker: &Docker,
+    config: &WorkflowFile,
+    wf: &WorkflowConfig,
+    emit: impl Fn(PipelineEvent),
 ) -> Result<()> {
     let image = image_tag(config, wf);
     let cmd = wf
@@ -27,6 +47,12 @@ pub async fn run_workflow(
     let container_name = format!("my-ci-{}", wf.name);
 
     println!("Running '{}' as container '{}'", wf.name, container_name);
+    emit(PipelineEvent::workflow(
+        wf.name.clone(),
+        WorkflowPhase::Run,
+        WorkflowStatus::Running,
+        format!("Running as container '{container_name}'"),
+    ));
 
     let create = docker
         .create_container(
@@ -108,7 +134,7 @@ pub async fn run_workflow(
 
     while let Some(output) = attach_stream.output.next().await {
         let output = output.context("container attach stream failed")?;
-        print_log_output(output);
+        emit_log_output(&wf.name, output, &emit);
     }
 
     let mut wait_stream = docker.wait_container(
@@ -121,6 +147,11 @@ pub async fn run_workflow(
     if let Some(wait_result) = wait_stream.next().await {
         let status = wait_result.context("failed while waiting for container")?;
         if status.status_code != 0 {
+            emit(PipelineEvent::error(
+                wf.name.clone(),
+                WorkflowPhase::Run,
+                format!("Exited with status {}", status.status_code),
+            ));
             bail!(
                 "workflow '{}' exited with status {}",
                 wf.name,
@@ -129,13 +160,34 @@ pub async fn run_workflow(
         }
     }
 
+    emit(PipelineEvent::workflow(
+        wf.name.clone(),
+        WorkflowPhase::Run,
+        WorkflowStatus::Succeeded,
+        "Run completed",
+    ));
     Ok(())
 }
 
+#[cfg(test)]
 fn print_log_output(output: LogOutput) {
     match output {
         LogOutput::StdOut { message } | LogOutput::StdErr { message } => {
             print!("{}", String::from_utf8_lossy(&message))
+        }
+        LogOutput::StdIn { .. } | LogOutput::Console { .. } => {}
+    }
+}
+
+fn emit_log_output(workflow: &str, output: LogOutput, emit: &impl Fn(PipelineEvent)) {
+    match output {
+        LogOutput::StdOut { message } | LogOutput::StdErr { message } => {
+            let message = String::from_utf8_lossy(&message).to_string();
+            emit(PipelineEvent::log(
+                workflow.to_string(),
+                WorkflowPhase::Run,
+                message,
+            ));
         }
         LogOutput::StdIn { .. } | LogOutput::Console { .. } => {}
     }

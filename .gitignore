@@ -15,3 +15,7 @@
 *~
 *.swp
 *.swo
+
+# UI build
+/ui/node_modules/
+/ui/dist/
