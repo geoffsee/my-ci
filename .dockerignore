@@ -1,0 +1,41 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Editors / OS
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Rust build artifacts
+target
+**/*.rs.bk
+*.pdb
+
+# UI build artifacts (rebuilt inside the image)
+ui/node_modules
+ui/dist
+
+# Local history / runtime state
+.my-ci
+
+# Local env files
+.env
+.env.*
+!.env.workflows.example
+
+# Test / tooling caches
+.playwright-mcp
+
+# Docs / images not needed at build time
+README.md
+my-ci.png
+
+# Containerfile / compose / dockerignore self
+.dockerignore
+Containerfile
+compose.yml

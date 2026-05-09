@@ -1,10 +1,12 @@
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use axum::extract::State;
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -14,6 +16,7 @@ use futures_util::StreamExt;
 use my_ci_macros::trace;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, error, info, warn};
@@ -22,6 +25,7 @@ use crate::build::build_workflow_with_events;
 use crate::config::{WorkflowFile, get_workflow, image_tag};
 use crate::events::{EventKind, PipelineEvent, WorkflowPhase, WorkflowStatus};
 use crate::graph::{resolve_build_plan, topological_order};
+use crate::history::{HistoryStore, RunRecord};
 use crate::oci::{
     OciRuntime, RuntimeChoice, connect_oci, describe_oci_target, select_oci_provider,
 };
@@ -32,7 +36,14 @@ struct AppState {
     config: Arc<WorkflowFile>,
     default_runtime: RuntimeChoice,
     events: broadcast::Sender<PipelineEvent>,
-    active: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    active: Arc<Mutex<Option<ActivePipeline>>>,
+    history: Option<HistoryStore>,
+}
+
+struct ActivePipeline {
+    handle: JoinHandle<()>,
+    run_id: Option<i64>,
+    persist: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,11 +84,23 @@ pub async fn serve_gui(
     }
 
     let (event_sender, _) = broadcast::channel(512);
+    let history_path = PathBuf::from(".my-ci/history.db");
+    let history = match HistoryStore::open(&history_path).await {
+        Ok(store) => {
+            info!(path = %history_path.display(), "history database ready");
+            Some(store)
+        }
+        Err(err) => {
+            warn!(error = %err, "history disabled");
+            None
+        }
+    };
     let state = AppState {
         config: Arc::new(config),
         default_runtime,
         events: event_sender,
         active: Arc::new(Mutex::new(None)),
+        history,
     };
 
     let ui_assets = ServeDir::new("ui/dist").fallback(ServeFile::new("ui/dist/index.html"));
@@ -89,6 +112,8 @@ pub async fn serve_gui(
         .route("/api/build", post(build))
         .route("/api/run", post(run))
         .route("/api/stop", post(stop))
+        .route("/api/runs", get(list_runs))
+        .route("/api/runs/{id}/events", get(list_run_events))
         .fallback_service(ui_assets)
         .with_state(state);
 
@@ -170,13 +195,22 @@ async fn run(
 async fn stop(State(state): State<AppState>) -> Json<PipelineResponse> {
     debug!("received GUI stop request");
     let mut active = state.active.lock().await;
-    if let Some(handle) = active.take() {
+    if let Some(active) = active.take() {
         warn!("aborting active pipeline task");
-        handle.abort();
+        active.handle.abort();
         let _ = state.events.send(PipelineEvent::pipeline(
             EventKind::PipelineCancelled,
             "Pipeline cancelled",
         ));
+        if let Some(persist) = active.persist {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            persist.abort();
+        }
+        if let (Some(history), Some(run_id)) = (state.history.as_ref(), active.run_id) {
+            if let Err(err) = history.finish_run(run_id, "cancelled").await {
+                warn!(error = %err, run_id, "failed to finalize cancelled run");
+            }
+        }
         return Json(PipelineResponse {
             accepted: true,
             message: "Pipeline cancelled".to_string(),
@@ -187,6 +221,42 @@ async fn stop(State(state): State<AppState>) -> Json<PipelineResponse> {
         accepted: false,
         message: "No active pipeline".to_string(),
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct RunsQuery {
+    limit: Option<i64>,
+}
+
+async fn list_runs(
+    State(state): State<AppState>,
+    Query(query): Query<RunsQuery>,
+) -> Result<Json<Vec<RunRecord>>, (StatusCode, String)> {
+    let history = state
+        .history
+        .as_ref()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "history disabled".into()))?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    history
+        .list_runs(limit)
+        .await
+        .map(Json)
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+async fn list_run_events(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<i64>,
+) -> Result<Json<Vec<crate::history::EventRecord>>, (StatusCode, String)> {
+    let history = state
+        .history
+        .as_ref()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "history disabled".into()))?;
+    history
+        .list_events(id)
+        .await
+        .map(Json)
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -204,7 +274,10 @@ async fn start_pipeline(
     let workflow = request.workflow;
     let runtime_choice = request.runtime.unwrap_or(state.default_runtime);
     let mut active = state.active.lock().await;
-    if active.as_ref().is_some_and(|handle| !handle.is_finished()) {
+    if active
+        .as_ref()
+        .is_some_and(|active| !active.handle.is_finished())
+    {
         warn!(mode = ?mode, workflow = ?workflow, "rejected pipeline request because another pipeline is active");
         return Json(PipelineResponse {
             accepted: false,
@@ -212,7 +285,10 @@ async fn start_pipeline(
         });
     }
 
-    if active.as_ref().is_some_and(|handle| handle.is_finished()) {
+    if active
+        .as_ref()
+        .is_some_and(|active| active.handle.is_finished())
+    {
         active.take();
     }
 
@@ -250,20 +326,74 @@ async fn start_pipeline(
         "starting GUI pipeline task"
     );
 
-    let worker_state = state.clone();
     let label = match mode {
         PipelineMode::Build => "Build",
         PipelineMode::Run => "Run",
     };
+
+    let run_id = if let Some(history) = state.history.as_ref() {
+        match history
+            .create_run(mode_str(mode), workflow.as_deref())
+            .await
+        {
+            Ok(id) => Some(id),
+            Err(err) => {
+                warn!(error = %err, "failed to record run; continuing without history for this run");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let persist = if let (Some(history), Some(run_id)) = (state.history.clone(), run_id) {
+        let receiver = state.events.subscribe();
+        Some(tokio::spawn(persist_run_events(history, run_id, receiver)))
+    } else {
+        None
+    };
+
+    let worker_state = state.clone();
     let handle = tokio::spawn(async move {
-        run_pipeline(worker_state, runtime, mode, plan).await;
+        run_pipeline(worker_state, runtime, mode, plan, run_id).await;
     });
-    *active = Some(handle);
+    *active = Some(ActivePipeline {
+        handle,
+        run_id,
+        persist,
+    });
 
     Json(PipelineResponse {
         accepted: true,
         message: format!("{label} started"),
     })
+}
+
+fn mode_str(mode: PipelineMode) -> &'static str {
+    match mode {
+        PipelineMode::Build => "build",
+        PipelineMode::Run => "run",
+    }
+}
+
+async fn persist_run_events(
+    history: HistoryStore,
+    run_id: i64,
+    mut receiver: broadcast::Receiver<PipelineEvent>,
+) {
+    loop {
+        match receiver.recv().await {
+            Ok(event) => {
+                if let Err(err) = history.append_event(run_id, &event).await {
+                    warn!(error = %err, run_id, "failed to persist run event");
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                warn!(run_id, skipped, "history subscriber lagged; events dropped");
+            }
+        }
+    }
 }
 
 fn connect_runtime_for_request(runtime: RuntimeChoice) -> Result<OciRuntime> {
@@ -298,12 +428,13 @@ fn plan_for(
     }
 }
 
-#[trace(level = "debug", skip(state, runtime), fields(mode = ?mode, targets = ?targets))]
+#[trace(level = "debug", skip(state, runtime), fields(mode = ?mode, targets = ?targets, run_id = ?run_id))]
 async fn run_pipeline(
     state: AppState,
     runtime: OciRuntime,
     mode: PipelineMode,
     targets: Vec<String>,
+    run_id: Option<i64>,
 ) {
     info!(mode = ?mode, targets = ?targets, "pipeline task started");
     let _ = state.events.send(PipelineEvent::pipeline(
@@ -315,6 +446,11 @@ async fn run_pipeline(
     let result = match mode {
         PipelineMode::Build => run_build_plan(&state, &runtime, &targets).await,
         PipelineMode::Run => run_run_plan(&state, &runtime, &targets).await,
+    };
+
+    let final_status = match &result {
+        Ok(()) => "succeeded",
+        Err(_) => "failed",
     };
 
     match result {
@@ -333,8 +469,23 @@ async fn run_pipeline(
         }
     }
 
-    let mut active = state.active.lock().await;
-    active.take();
+    let active = {
+        let mut active = state.active.lock().await;
+        active.take()
+    };
+
+    if let Some(active) = active {
+        if let Some(persist) = active.persist {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            persist.abort();
+        }
+    }
+
+    if let (Some(history), Some(run_id)) = (state.history.as_ref(), run_id) {
+        if let Err(err) = history.finish_run(run_id, final_status).await {
+            warn!(error = %err, run_id, "failed to finalize run");
+        }
+    }
 }
 
 #[trace(level = "trace", skip(state), fields(mode = ?mode, targets = ?targets))]
@@ -369,16 +520,22 @@ async fn run_build_plan(state: &AppState, runtime: &OciRuntime, targets: &[Strin
 
 #[trace(level = "debug", skip(state, runtime), err, fields(targets = ?targets))]
 async fn run_run_plan(state: &AppState, runtime: &OciRuntime, targets: &[String]) -> Result<()> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut build_order: Vec<String> = Vec::new();
     for target in targets {
-        debug!(workflow = %target, "building dependencies for GUI run plan step");
         for dep in resolve_build_plan(&state.config, target)? {
-            debug!(workflow = %target, dependency = %dep, "building GUI run dependency");
-            let wf = get_workflow(&state.config, &dep)?;
-            build_workflow_with_events(runtime, &state.config, wf, |event| {
-                let _ = state.events.send(event);
-            })
-            .await?;
+            if seen.insert(dep.clone()) {
+                build_order.push(dep);
+            }
         }
+    }
+    for dep in &build_order {
+        debug!(dependency = %dep, "building GUI run dependency");
+        let wf = get_workflow(&state.config, dep)?;
+        build_workflow_with_events(runtime, &state.config, wf, |event| {
+            let _ = state.events.send(event);
+        })
+        .await?;
     }
 
     for target in targets {

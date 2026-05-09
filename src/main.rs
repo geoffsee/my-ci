@@ -4,6 +4,7 @@ mod config;
 mod events;
 mod graph;
 mod gui;
+mod history;
 mod init;
 mod oci;
 mod run;

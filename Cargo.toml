@@ -6,7 +6,7 @@ my-ci-macros = { path = "crates/my-ci-macros", version = "0.0.2" }
 
 [package]
 name = "my-ci"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 license = "MIT"
 description = "Minimalist Local CICD"
@@ -28,6 +28,7 @@ my-ci-macros = { workspace = true }
 rust-embed = { version = "8.11.0", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 tar = "0.4"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

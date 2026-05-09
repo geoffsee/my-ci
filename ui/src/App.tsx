@@ -58,25 +58,26 @@ type LogEntry = {
   message: string;
 };
 
-const SIGNAL_BY_CONN: Record<ConnectionState, { code: string; klass: string }> = {
-  "Connecting...": { code: "CON", klass: "signal--warn" },
-  Live: { code: "LIV", klass: "signal--ok" },
-  "Reconnecting...": { code: "RCN", klass: "signal--err" }
-};
+const SIGNAL_BY_CONN: Record<ConnectionState, { code: string; klass: string }> =
+  {
+    "Connecting...": { code: "CON", klass: "signal--warn" },
+    Live: { code: "LIV", klass: "signal--ok" },
+    "Reconnecting...": { code: "RCN", klass: "signal--err" },
+  };
 
 const MAX_LOGS = 800;
 
 const BASE_RUNTIME_OPTIONS: RuntimeOption[] = [
   { value: "auto", label: "[ AUTO ]" },
   { value: "docker", label: "Docker" },
-  { value: "podman", label: "Podman" }
+  { value: "podman", label: "Podman" },
 ];
 
 const MACOS_RUNTIME_OPTIONS: RuntimeOption[] = [
   { value: "auto", label: "[ AUTO ]" },
   { value: "apple-container", label: "Apple container" },
   { value: "docker", label: "Docker" },
-  { value: "podman", label: "Podman" }
+  { value: "podman", label: "Podman" },
 ];
 
 function pad2(n: number): string {
@@ -96,14 +97,19 @@ function formatTimestamp(ms: number): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
 }
 
-function buildPrefix(phase: string | null | undefined, workflow: string | null | undefined): string {
+function buildPrefix(
+  phase: string | null | undefined,
+  workflow: string | null | undefined,
+): string {
   const p = (phase || "phase").toUpperCase();
   const w = workflow || "—";
   return `${p} · ${w}`;
 }
 
 function detectBrowserPlatform(): "macos" | "other" {
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const nav = navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  };
   const platform = `${nav.userAgentData?.platform || navigator.platform || navigator.userAgent}`;
   return /mac/i.test(platform) ? "macos" : "other";
 }
@@ -125,12 +131,15 @@ let nextLogId = 1;
 
 export default function App(): JSX.Element {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [statuses, setStatuses] = useState<Map<string, string>>(() => new Map());
+  const [statuses, setStatuses] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const [running, setRunning] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState("");
   const [selectedRuntime, setSelectedRuntime] = useState<RuntimeChoice>("auto");
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("Connecting...");
+  const [connectionState, setConnectionState] =
+    useState<ConnectionState>("Connecting...");
   const [now, setNow] = useState(() => new Date());
   const [projectName, setProjectName] = useState("my-ci");
   const [eventCount, setEventCount] = useState(0);
@@ -138,16 +147,17 @@ export default function App(): JSX.Element {
 
   const logsRef = useRef<HTMLDivElement>(null);
   const browserPlatform = useMemo(() => detectBrowserPlatform(), []);
-  const runtimeOptions = browserPlatform === "macos" ? MACOS_RUNTIME_OPTIONS : BASE_RUNTIME_OPTIONS;
+  const runtimeOptions =
+    browserPlatform === "macos" ? MACOS_RUNTIME_OPTIONS : BASE_RUNTIME_OPTIONS;
 
   const renderedWorkflows = useMemo<RenderedWorkflow[]>(
     () =>
       workflows.map((wf, i) => ({
         ...wf,
         index: i,
-        status: statuses.get(wf.name) || "idle"
+        status: statuses.get(wf.name) || "idle",
       })),
-    [workflows, statuses]
+    [workflows, statuses],
   );
 
   const stats = useMemo(() => {
@@ -186,18 +196,23 @@ export default function App(): JSX.Element {
       idle,
       skip,
       total: renderedWorkflows.length,
-      waiting: idle + pend + skip
+      waiting: idle + pend + skip,
     };
   }, [renderedWorkflows]);
 
-  function appendLog(level: LogLevel, prefix: string, message: string, ts?: number): void {
+  function appendLog(
+    level: LogLevel,
+    prefix: string,
+    message: string,
+    ts?: number,
+  ): void {
     setLogs((prev) => {
       const entry: LogEntry = {
         id: nextLogId++,
         ts: ts ?? Date.now(),
         level,
         prefix,
-        message
+        message,
       };
       if (prev.length >= MAX_LOGS) {
         const next = prev.slice(prev.length - (MAX_LOGS - 1));
@@ -233,10 +248,14 @@ export default function App(): JSX.Element {
     const source = new EventSource("/api/events");
 
     source.addEventListener("open", () => setConnectionState("Live"));
-    source.addEventListener("error", () => setConnectionState("Reconnecting..."));
+    source.addEventListener("error", () =>
+      setConnectionState("Reconnecting..."),
+    );
 
     source.addEventListener("pipeline", (msg) => {
-      const event = JSON.parse((msg as MessageEvent<string>).data) as PipelineEvent;
+      const event = JSON.parse(
+        (msg as MessageEvent<string>).data,
+      ) as PipelineEvent;
       const ts = event.timestamp_ms || Date.now();
       const kind = event.kind;
 
@@ -262,12 +281,22 @@ export default function App(): JSX.Element {
             return n;
           });
         }
-        appendLog("status", buildPrefix(event.phase, event.workflow), event.message, ts);
+        appendLog(
+          "status",
+          buildPrefix(event.phase, event.workflow),
+          event.message,
+          ts,
+        );
         return;
       }
 
       if (kind === "log") {
-        appendLog("log", buildPrefix(event.phase, event.workflow), event.message, ts);
+        appendLog(
+          "log",
+          buildPrefix(event.phase, event.workflow),
+          event.message,
+          ts,
+        );
         return;
       }
 
@@ -306,7 +335,7 @@ export default function App(): JSX.Element {
       const res = await fetch(path, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workflow, runtime: selectedRuntime })
+        body: JSON.stringify({ workflow, runtime: selectedRuntime }),
       });
       const data = (await res.json()) as CommandResponse;
       appendLog("control", "CTRL", data.message);
@@ -361,7 +390,11 @@ export default function App(): JSX.Element {
           </div>
         </div>
 
-        <div className="topbar__signals" role="group" aria-label="System signals">
+        <div
+          className="topbar__signals"
+          role="group"
+          aria-label="System signals"
+        >
           <div className={`signal ${sig.klass}`}>
             <span className="signal__dot" aria-hidden="true" />
             <span className="signal__label">SIG</span>
@@ -390,7 +423,9 @@ export default function App(): JSX.Element {
             <select
               value={selectedWorkflow}
               onChange={(event) =>
-                setSelectedWorkflow((event.currentTarget as HTMLSelectElement).value)
+                setSelectedWorkflow(
+                  (event.currentTarget as HTMLSelectElement).value,
+                )
               }
             >
               <option value="">[ ALL WORKFLOWS ]</option>
@@ -405,7 +440,9 @@ export default function App(): JSX.Element {
             </span>
           </div>
           <span className="strip__hint">
-            {selectedWorkflow ? `scoped: ${selectedWorkflow}` : "scope: all runnable"}
+            {selectedWorkflow
+              ? `scoped: ${selectedWorkflow}`
+              : "scope: all runnable"}
           </span>
         </div>
         <div className="strip__group">
@@ -416,7 +453,8 @@ export default function App(): JSX.Element {
               disabled={running}
               onChange={(event) =>
                 setSelectedRuntime(
-                  (event.currentTarget as HTMLSelectElement).value as RuntimeChoice
+                  (event.currentTarget as HTMLSelectElement)
+                    .value as RuntimeChoice,
                 )
               }
             >
@@ -431,7 +469,9 @@ export default function App(): JSX.Element {
             </span>
           </div>
           <span className="strip__hint">
-            {browserPlatform === "macos" ? "platform: macos" : "platform: generic"}
+            {browserPlatform === "macos"
+              ? "platform: macos"
+              : "platform: generic"}
           </span>
         </div>
         <div className="strip__group strip__group--right">
@@ -526,7 +566,9 @@ export default function App(): JSX.Element {
                       <div className="node__head">
                         <div className="node__name">{wf.name}</div>
                         <div className="node__flags">
-                          <span className={`flag flag--${flag.toLowerCase()}`}>{flag}</span>
+                          <span className={`flag flag--${flag.toLowerCase()}`}>
+                            {flag}
+                          </span>
                         </div>
                       </div>
                       <div className="node__meta">
@@ -541,7 +583,10 @@ export default function App(): JSX.Element {
                           ) : (
                             wf.depends_on.map((d) => (
                               <span key={d} className="dep-pill">
-                                <span className="dep-pill__arrow" aria-hidden="true">
+                                <span
+                                  className="dep-pill__arrow"
+                                  aria-hidden="true"
+                                >
                                   ←
                                 </span>
                                 {d}
@@ -581,7 +626,9 @@ export default function App(): JSX.Element {
                 <span className="kv__k">CLK</span>
                 <span className="kv__v">{clockText}</span>
               </span>
-              <span className={`kv kv--toggle ${autoScroll ? "kv--on" : "kv--off"}`}>
+              <span
+                className={`kv kv--toggle ${autoScroll ? "kv--on" : "kv--off"}`}
+              >
                 <span className="kv__k">FLW</span>
                 <span className="kv__v">{autoScroll ? "ON" : "OFF"}</span>
               </span>

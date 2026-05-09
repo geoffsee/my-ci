@@ -2,7 +2,6 @@
 
 <img src="./my-ci.png" alt="my-ci" width="75%">
 
-
 Run local CI/CD workflows over Docker, Podman, or Apple container on macOS.
 
 ## Demo
@@ -30,12 +29,12 @@ my-ci run         # build + run the pipeline
 
 ## Commands
 
-| Command | Args                                   | Description                                                              |
-| ------- | -------------------------------------- | ------------------------------------------------------------------------ |
-| `init`  | `[PATH]` (default `my-ci`), `--force`  | Scaffold the embedded template into `PATH`. Skips existing unless force. |
-| `build` | `[WORKFLOW]`                           | Build one workflow + deps, or all workflows when omitted.                |
-| `run`   | `[WORKFLOW]`                           | Build deps, then run workflows that have a `command`. All when omitted.  |
-| `list`  | —                                      | Print workflow names from config.                                        |
+| Command | Args                                  | Description                                                              |
+| ------- | ------------------------------------- | ------------------------------------------------------------------------ |
+| `init`  | `[PATH]` (default `my-ci`), `--force` | Scaffold the embedded template into `PATH`. Skips existing unless force. |
+| `build` | `[WORKFLOW]`                          | Build one workflow + deps, or all workflows when omitted.                |
+| `run`   | `[WORKFLOW]`                          | Build deps, then run workflows that have a `command`. All when omitted.  |
+| `list`  | —                                     | Print workflow names from config.                                        |
 
 Global:
 

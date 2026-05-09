@@ -10,3 +10,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./my-ci:/work/my-ci
+      - my-ci-history:/work/.my-ci
+
+volumes:
+  my-ci-history:
