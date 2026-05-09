@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
-use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, error, info, warn};
 
 use crate::build::build_workflow_with_events;
@@ -30,6 +29,7 @@ use crate::oci::{
     OciRuntime, RuntimeChoice, connect_oci, describe_oci_target, select_oci_provider,
 };
 use crate::run::run_workflow_with_events;
+use crate::ui_assets;
 
 #[derive(Clone)]
 struct AppState {
@@ -79,8 +79,10 @@ pub async fn serve_gui(
     config: WorkflowFile,
     default_runtime: RuntimeChoice,
 ) -> Result<()> {
-    if !Path::new("ui/dist/index.html").is_file() {
-        bail!("UI assets missing: run `cd ui && npm install && npm run build`");
+    if !ui_assets::has_assets() {
+        bail!(
+            "UI assets missing from this build: rebuild with `bun run build` in ui/ before `cargo build`, or unset MY_CI_SKIP_UI_BUILD"
+        );
     }
 
     let (event_sender, _) = broadcast::channel(512);
@@ -103,8 +105,6 @@ pub async fn serve_gui(
         history,
     };
 
-    let ui_assets = ServeDir::new("ui/dist").fallback(ServeFile::new("ui/dist/index.html"));
-
     let app = Router::new()
         .route("/favicon.ico", get(favicon))
         .route("/api/pipeline", get(pipeline))
@@ -114,7 +114,7 @@ pub async fn serve_gui(
         .route("/api/stop", post(stop))
         .route("/api/runs", get(list_runs))
         .route("/api/runs/{id}/events", get(list_run_events))
-        .fallback_service(ui_assets)
+        .fallback(ui_assets::fallback)
         .with_state(state);
 
     let addr = SocketAddr::new(host, port);

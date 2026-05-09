@@ -17,6 +17,7 @@ COPY crates ./crates
 COPY build.rs ./
 COPY src ./src
 COPY my-ci ./my-ci
+COPY ui/package.json ui/bun.lock ./ui/
 COPY --from=ui /ui/dist ./ui/dist
 RUN cargo build --release --bin my-ci
 
@@ -27,6 +28,5 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /work
 COPY --from=build /src/target/release/my-ci /usr/local/bin/my-ci
-COPY --from=ui /ui/dist /work/ui/dist
 EXPOSE 7878
 CMD ["my-ci", "--runtime", "docker", "gui", "--host", "0.0.0.0", "--port", "7878"]

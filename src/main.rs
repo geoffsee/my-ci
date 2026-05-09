@@ -9,6 +9,7 @@ mod init;
 mod oci;
 mod run;
 mod telemetry;
+mod ui_assets;
 
 use anyhow::{Context, Result};
 use clap::Parser;
