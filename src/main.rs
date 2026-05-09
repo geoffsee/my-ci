@@ -11,6 +11,8 @@ mod run;
 mod telemetry;
 mod ui_assets;
 
+use std::collections::HashSet;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use my_ci_macros::trace;
@@ -86,12 +88,19 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 None => topological_order(&config)?,
             };
             debug!(targets = ?targets, "resolved run targets");
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut build_order: Vec<String> = Vec::new();
             for target in &targets {
-                debug!(workflow = %target, "building workflow dependencies before run");
                 for dep in resolve_build_plan(&config, target)? {
-                    let wf = get_workflow(&config, &dep)?;
-                    build_workflow(&oci_runtime, &config, wf).await?;
+                    if seen.insert(dep.clone()) {
+                        build_order.push(dep);
+                    }
                 }
+            }
+            debug!(build_order = ?build_order, "deduplicated build order before run");
+            for dep in &build_order {
+                let wf = get_workflow(&config, dep)?;
+                build_workflow(&oci_runtime, &config, wf).await?;
             }
             for target in &targets {
                 let wf = get_workflow(&config, target)?;

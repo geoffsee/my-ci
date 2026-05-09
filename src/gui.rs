@@ -495,6 +495,22 @@ fn mark_pending(state: &AppState, targets: &[String], mode: PipelineMode) {
         PipelineMode::Run => WorkflowPhase::Run,
     };
     for target in targets {
+        if matches!(mode, PipelineMode::Run) {
+            match get_workflow(&state.config, target) {
+                Ok(wf) if wf.command.is_none() => {
+                    debug!(
+                        workflow = %target,
+                        "skipping pending mark for build-only workflow in run mode"
+                    );
+                    continue;
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    warn!(workflow = %target, error = %err, "unknown workflow during mark_pending");
+                    continue;
+                }
+            }
+        }
         debug!(workflow = %target, phase = ?phase, "marking workflow pending");
         let _ = state.events.send(PipelineEvent::workflow(
             target.clone(),
@@ -547,12 +563,11 @@ async fn run_run_plan(state: &AppState, runtime: &OciRuntime, targets: &[String]
             })
             .await?;
         } else {
-            debug!(workflow = %wf.name, "skipping workflow with no command configured");
-            let _ = state.events.send(PipelineEvent::workflow(
+            debug!(workflow = %wf.name, "build-only workflow, no run-phase action");
+            let _ = state.events.send(PipelineEvent::log(
                 wf.name.clone(),
                 WorkflowPhase::Run,
-                WorkflowStatus::Skipped,
-                "No command configured",
+                "Build-only workflow; no command configured\n",
             ));
         }
     }

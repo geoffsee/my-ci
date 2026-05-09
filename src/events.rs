@@ -37,6 +37,7 @@ pub enum WorkflowStatus {
     Running,
     Succeeded,
     Failed,
+    #[allow(dead_code)]
     Skipped,
 }
 

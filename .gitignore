@@ -19,3 +19,4 @@
 # UI build
 /ui/node_modules/
 /ui/dist/
+/.my-ci/history.db
