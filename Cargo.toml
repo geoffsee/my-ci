@@ -1,3 +1,9 @@
+[workspace]
+members = ["crates/my-ci-macros"]
+
+[workspace.dependencies]
+my-ci-macros = { path = "crates/my-ci-macros", version = "0.0.2" }
+
 [package]
 name = "my-ci"
 version = "0.0.3"
@@ -18,7 +24,7 @@ bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 dotenvy = "0.15.7"
 futures-util = "0.3"
-my-ci-macros = { path = "crates/my-ci-macros", version = "0.0.2" }
+my-ci-macros = { workspace = true }
 rust-embed = { version = "8.11.0", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

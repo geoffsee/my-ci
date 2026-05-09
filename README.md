@@ -10,11 +10,7 @@ Run local CI/CD workflows over Docker, Podman, or Apple container on macOS.
 ```sh
 git clone https://github.com/geoffsee/my-ci.git
 cd my-ci
-cd ui
-npm install
-npm run build
-cd ..
-cargo run -- gui --port 7878
+docker compose up
 ```
 
 Then open `http://127.0.0.1:7878`, click `Run`, and watch the pipeline execute in realtime.

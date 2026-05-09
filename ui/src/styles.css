@@ -1335,6 +1335,9 @@ select:focus-visible {
    ========================================================================= */
 
 .statusbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   justify-content: space-between;
   align-items: center;

@@ -1,0 +1,12 @@
+services:
+  my-ci:
+    image: ghcr.io/geoffsee/my-ci:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "7878:7878"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./my-ci:/work/my-ci
