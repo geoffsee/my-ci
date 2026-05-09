@@ -3,7 +3,7 @@
 <img src="./my-ci.png" alt="my-ci" width="75%">
 
 
-Run local CI/CD workflows over an OCI socket (Docker or Podman).
+Run local CI/CD workflows over Docker, Podman, or Apple container on macOS.
 
 ## Demo
 
@@ -41,7 +41,33 @@ my-ci run         # build + run the pipeline
 | `run`   | `[WORKFLOW]`                           | Build deps, then run workflows that have a `command`. All when omitted.  |
 | `list`  | —                                      | Print workflow names from config.                                        |
 
-Global: `-c, --config <PATH>` (default `my-ci/workflows.toml`).
+Global:
+
+- `-c, --config <PATH>` (default `my-ci/workflows.toml`)
+- `--runtime <auto|docker|podman|apple-container>` (default `auto`)
+
+On macOS, `auto` uses the `container` CLI when it is installed and its service is running. Otherwise it falls back to a Docker socket, then a Podman socket. To force Apple's runtime, run:
+
+```sh
+my-ci --runtime apple-container run
+```
+
+Apple container requires the `container` CLI and its system service. Start it with:
+
+```sh
+container system start
+```
+
+The GUI exposes the same runtime choices for build/run requests. The Apple container option is shown only when the browser reports a macOS platform.
+
+## Debugging
+
+`my-ci` emits structured traces to stderr. The default filter enables app-level info traces. Override it with `RUST_LOG` when you need more or less detail:
+
+```sh
+RUST_LOG=my_ci=trace my-ci run
+RUST_LOG=my_ci=debug,bollard=warn my-ci --runtime docker build
+```
 
 ## `workflows.toml` schema
 

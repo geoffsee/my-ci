@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use my_ci_macros::trace;
 use serde::Deserialize;
+use tracing::debug;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowFile {
@@ -27,14 +29,21 @@ pub struct WorkflowConfig {
     pub command: Option<Vec<String>>,
 }
 
+#[trace(level = "debug", err, fields(path = %path.display()))]
 pub fn load_config(path: &Path) -> Result<WorkflowFile> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read config file at {}", path.display()))?;
+    debug!(bytes = raw.len(), "read workflow config file");
     let mut parsed: WorkflowFile = toml::from_str(&raw)
         .with_context(|| format!("failed to parse TOML file at {}", path.display()))?;
     if parsed.workflow.is_empty() {
         bail!("config contains no [[workflow]] entries");
     }
+    debug!(
+        workflow_count = parsed.workflow.len(),
+        env_file = ?parsed.env_file,
+        "parsed workflow config"
+    );
 
     let config_dir = path.parent().unwrap_or_else(|| Path::new("."));
     if let Some(env_file) = &parsed.env_file {
@@ -43,22 +52,26 @@ pub fn load_config(path: &Path) -> Result<WorkflowFile> {
         } else {
             config_dir.join(env_file)
         };
+        debug!(env_file = %resolved.display(), "loading env file");
         dotenvy::from_path(&resolved)
             .with_context(|| format!("failed to load env_file at {}", resolved.display()))?;
     }
     for workflow in &mut parsed.workflow {
+        debug!(workflow = %workflow.name, "hydrating workflow instructions");
         hydrate_instructions_from_containerfile(config_dir, workflow)?;
     }
 
     Ok(parsed)
 }
 
+#[trace(level = "debug", skip(workflow), err, fields(config_dir = %config_dir.display(), workflow = %workflow.name))]
 pub fn hydrate_instructions_from_containerfile(
     config_dir: &Path,
     workflow: &mut WorkflowConfig,
 ) -> Result<()> {
     let candidate = workflow.instructions.trim();
     if candidate.is_empty() || candidate.contains('\n') {
+        debug!("workflow already has inline instructions");
         return Ok(());
     }
 
@@ -70,6 +83,7 @@ pub fn hydrate_instructions_from_containerfile(
     };
 
     if !resolved.is_file() {
+        debug!(candidate = %resolved.display(), "workflow instructions are not a readable file path");
         return Ok(());
     }
 
@@ -78,9 +92,11 @@ pub fn hydrate_instructions_from_containerfile(
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(".Containerfile"));
     if !is_containerfile {
+        debug!(candidate = %resolved.display(), "workflow instructions file is not a Containerfile");
         return Ok(());
     }
 
+    debug!(containerfile = %resolved.display(), "reading workflow Containerfile");
     workflow.instructions = std::fs::read_to_string(&resolved).with_context(|| {
         format!(
             "failed to read Containerfile for workflow '{}' at {}",
@@ -91,6 +107,7 @@ pub fn hydrate_instructions_from_containerfile(
     Ok(())
 }
 
+#[trace(level = "trace", skip(config), err, fields(workflow = %name))]
 pub fn get_workflow<'a>(config: &'a WorkflowFile, name: &str) -> Result<&'a WorkflowConfig> {
     config
         .workflow
@@ -99,6 +116,7 @@ pub fn get_workflow<'a>(config: &'a WorkflowFile, name: &str) -> Result<&'a Work
         .ok_or_else(|| anyhow!("unknown workflow '{name}'"))
 }
 
+#[trace(level = "trace", ret, fields(context = %context.display()))]
 pub fn normalize_context(context: &Path) -> PathBuf {
     if context.as_os_str().is_empty() {
         PathBuf::from(".")
@@ -107,6 +125,7 @@ pub fn normalize_context(context: &Path) -> PathBuf {
     }
 }
 
+#[trace(level = "trace", skip(config, wf), ret, fields(project = %config.name, workflow = %wf.name))]
 pub fn image_tag(config: &WorkflowFile, wf: &WorkflowConfig) -> String {
     let project = if config.name.trim().is_empty() {
         "my-ci"

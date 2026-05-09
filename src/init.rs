@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
+use my_ci_macros::trace;
 use rust_embed::RustEmbed;
+use tracing::{debug, info};
 
 #[derive(RustEmbed)]
 #[folder = "my-ci/"]
@@ -10,6 +12,7 @@ use rust_embed::RustEmbed;
 #[include = ".env.workflows.example"]
 struct ScaffoldAssets;
 
+#[trace(level = "debug", err, fields(target = %target.display(), force))]
 pub fn scaffold_init(target: &Path, force: bool) -> Result<()> {
     std::fs::create_dir_all(target)
         .with_context(|| format!("failed to create {}", target.display()))?;
@@ -19,28 +22,32 @@ pub fn scaffold_init(target: &Path, force: bool) -> Result<()> {
         bail!("no scaffold assets embedded in binary");
     }
     files.sort();
+    debug!(file_count = files.len(), "found embedded scaffold assets");
 
     let mut written = 0usize;
     let mut skipped = 0usize;
     for rel in &files {
-        let asset = ScaffoldAssets::get(rel)
-            .ok_or_else(|| anyhow!("missing embedded asset '{rel}'"))?;
+        let asset =
+            ScaffoldAssets::get(rel).ok_or_else(|| anyhow!("missing embedded asset '{rel}'"))?;
         let dest = target.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
         if dest.exists() && !force {
+            debug!(path = %dest.display(), "skipping existing scaffold file");
             println!("skip {} (exists; use --force to overwrite)", dest.display());
             skipped += 1;
             continue;
         }
         std::fs::write(&dest, asset.data.as_ref())
             .with_context(|| format!("failed to write {}", dest.display()))?;
+        debug!(path = %dest.display(), bytes = asset.data.len(), "wrote scaffold file");
         println!("wrote {}", dest.display());
         written += 1;
     }
 
+    info!(written, skipped, "scaffold init complete");
     println!("init complete ({written} written, {skipped} skipped)");
     Ok(())
 }

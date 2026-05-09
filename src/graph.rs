@@ -1,12 +1,16 @@
 use std::collections::HashSet;
 
 use anyhow::{Result, bail};
+use my_ci_macros::trace;
+use tracing::debug;
 
 use crate::config::{WorkflowConfig, WorkflowFile, get_workflow};
 
+#[trace(level = "debug", skip(config), ret, err)]
 pub fn topological_order(config: &WorkflowFile) -> Result<Vec<String>> {
     let mut names = HashSet::new();
     for wf in &config.workflow {
+        debug!(workflow = %wf.name, "checking workflow name uniqueness");
         if !names.insert(wf.name.clone()) {
             bail!("duplicate workflow name '{}'", wf.name);
         }
@@ -16,11 +20,13 @@ pub fn topological_order(config: &WorkflowFile) -> Result<Vec<String>> {
     let mut visited = HashSet::new();
     let mut ordered = Vec::new();
     for wf in &config.workflow {
+        debug!(workflow = %wf.name, "visiting workflow for topological order");
         dfs_visit(wf, config, &mut visiting, &mut visited, &mut ordered)?;
     }
     Ok(ordered)
 }
 
+#[trace(level = "debug", skip(config), ret, err, fields(target = %target))]
 pub fn resolve_build_plan(config: &WorkflowFile, target: &str) -> Result<Vec<String>> {
     let root = get_workflow(config, target)?;
     let mut visiting = HashSet::new();
@@ -30,6 +36,7 @@ pub fn resolve_build_plan(config: &WorkflowFile, target: &str) -> Result<Vec<Str
     Ok(ordered)
 }
 
+#[trace(level = "trace", skip(config, visiting, visited, ordered), err, fields(workflow = %wf.name))]
 fn dfs_visit(
     wf: &WorkflowConfig,
     config: &WorkflowFile,
@@ -45,6 +52,7 @@ fn dfs_visit(
     }
 
     for dep in &wf.depends_on {
+        debug!(workflow = %wf.name, dependency = %dep, "visiting workflow dependency");
         let dep_wf = get_workflow(config, dep)?;
         dfs_visit(dep_wf, config, visiting, visited, ordered)?;
     }
@@ -52,6 +60,7 @@ fn dfs_visit(
     visiting.remove(&wf.name);
     visited.insert(wf.name.clone());
     ordered.push(wf.name.clone());
+    debug!(workflow = %wf.name, "added workflow to ordered plan");
     Ok(())
 }
 

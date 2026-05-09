@@ -3,12 +3,16 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::oci::RuntimeChoice;
+
 #[derive(Parser, Debug)]
 #[command(name = "my-ci")]
-#[command(about = "Run local CI/CD workflows through an OCI socket")]
+#[command(about = "Run local CI/CD workflows through Docker, Podman, or Apple container")]
 pub struct Cli {
     #[arg(short, long, default_value = "my-ci/workflows.toml")]
     pub config: PathBuf,
+    #[arg(long, value_enum, default_value_t = RuntimeChoice::Auto)]
+    pub runtime: RuntimeChoice,
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -91,6 +95,18 @@ mod tests {
     fn config_default_is_my_ci_workflows_toml() {
         let cli = Cli::try_parse_from(["my-ci", "list"]).unwrap();
         assert_eq!(cli.config, PathBuf::from("my-ci/workflows.toml"));
+    }
+
+    #[test]
+    fn runtime_defaults_to_auto() {
+        let cli = Cli::try_parse_from(["my-ci", "list"]).unwrap();
+        assert_eq!(cli.runtime, RuntimeChoice::Auto);
+    }
+
+    #[test]
+    fn runtime_accepts_apple_container() {
+        let cli = Cli::try_parse_from(["my-ci", "--runtime", "apple-container", "run"]).unwrap();
+        assert_eq!(cli.runtime, RuntimeChoice::AppleContainer);
     }
 
     #[test]

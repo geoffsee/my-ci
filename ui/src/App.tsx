@@ -22,6 +22,13 @@ type CommandResponse = {
   message: string;
 };
 
+type RuntimeChoice = "auto" | "docker" | "podman" | "apple-container";
+
+type RuntimeOption = {
+  value: RuntimeChoice;
+  label: string;
+};
+
 type EventKind =
   | "pipeline-started"
   | "pipeline-finished"
@@ -59,6 +66,19 @@ const SIGNAL_BY_CONN: Record<ConnectionState, { code: string; klass: string }> =
 
 const MAX_LOGS = 800;
 
+const BASE_RUNTIME_OPTIONS: RuntimeOption[] = [
+  { value: "auto", label: "[ AUTO ]" },
+  { value: "docker", label: "Docker" },
+  { value: "podman", label: "Podman" }
+];
+
+const MACOS_RUNTIME_OPTIONS: RuntimeOption[] = [
+  { value: "auto", label: "[ AUTO ]" },
+  { value: "apple-container", label: "Apple container" },
+  { value: "docker", label: "Docker" },
+  { value: "podman", label: "Podman" }
+];
+
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -82,6 +102,25 @@ function buildPrefix(phase: string | null | undefined, workflow: string | null |
   return `${p} · ${w}`;
 }
 
+function detectBrowserPlatform(): "macos" | "other" {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = `${nav.userAgentData?.platform || navigator.platform || navigator.userAgent}`;
+  return /mac/i.test(platform) ? "macos" : "other";
+}
+
+function runtimeLabel(runtime: RuntimeChoice): string {
+  switch (runtime) {
+    case "apple-container":
+      return "APPLE";
+    case "docker":
+      return "DOCKER";
+    case "podman":
+      return "PODMAN";
+    default:
+      return "AUTO";
+  }
+}
+
 let nextLogId = 1;
 
 export default function App(): JSX.Element {
@@ -89,6 +128,7 @@ export default function App(): JSX.Element {
   const [statuses, setStatuses] = useState<Map<string, string>>(() => new Map());
   const [running, setRunning] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState("");
+  const [selectedRuntime, setSelectedRuntime] = useState<RuntimeChoice>("auto");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connectionState, setConnectionState] = useState<ConnectionState>("Connecting...");
   const [now, setNow] = useState(() => new Date());
@@ -97,6 +137,8 @@ export default function App(): JSX.Element {
   const [autoScroll, setAutoScroll] = useState(true);
 
   const logsRef = useRef<HTMLDivElement>(null);
+  const browserPlatform = useMemo(() => detectBrowserPlatform(), []);
+  const runtimeOptions = browserPlatform === "macos" ? MACOS_RUNTIME_OPTIONS : BASE_RUNTIME_OPTIONS;
 
   const renderedWorkflows = useMemo<RenderedWorkflow[]>(
     () =>
@@ -264,7 +306,7 @@ export default function App(): JSX.Element {
       const res = await fetch(path, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workflow })
+        body: JSON.stringify({ workflow, runtime: selectedRuntime })
       });
       const data = (await res.json()) as CommandResponse;
       appendLog("control", "CTRL", data.message);
@@ -364,6 +406,32 @@ export default function App(): JSX.Element {
           </div>
           <span className="strip__hint">
             {selectedWorkflow ? `scoped: ${selectedWorkflow}` : "scope: all runnable"}
+          </span>
+        </div>
+        <div className="strip__group">
+          <span className="strip__label">RUNTIME</span>
+          <div className="select select--runtime">
+            <select
+              value={selectedRuntime}
+              disabled={running}
+              onChange={(event) =>
+                setSelectedRuntime(
+                  (event.currentTarget as HTMLSelectElement).value as RuntimeChoice
+                )
+              }
+            >
+              {runtimeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="select__caret" aria-hidden="true">
+              ▾
+            </span>
+          </div>
+          <span className="strip__hint">
+            {browserPlatform === "macos" ? "platform: macos" : "platform: generic"}
           </span>
         </div>
         <div className="strip__group strip__group--right">
@@ -558,6 +626,10 @@ export default function App(): JSX.Element {
           <span className="kv">
             <span className="kv__k">SCOPE</span>
             <span className="kv__v">{selectedWorkflow || "ALL"}</span>
+          </span>
+          <span className="kv">
+            <span className="kv__k">RT</span>
+            <span className="kv__v">{runtimeLabel(selectedRuntime)}</span>
           </span>
         </div>
         <div className="statusbar__group statusbar__group--center">

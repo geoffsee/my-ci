@@ -1,0 +1,13 @@
+[package]
+name = "my-ci-macros"
+version = "0.0.2"
+edition = "2024"
+license = "MIT"
+description = "Tracing helper macros for my-ci"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"

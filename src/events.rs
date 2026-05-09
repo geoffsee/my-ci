@@ -42,14 +42,20 @@ pub enum WorkflowStatus {
 
 impl PipelineEvent {
     pub fn pipeline(kind: EventKind, message: impl Into<String>) -> Self {
-        Self {
+        let event = Self {
             kind,
             timestamp_ms: now_ms(),
             workflow: None,
             phase: None,
             status: None,
             message: message.into(),
-        }
+        };
+        tracing::trace!(
+            kind = ?event.kind,
+            message = %event.message,
+            "created pipeline event"
+        );
+        event
     }
 
     pub fn workflow(
@@ -58,14 +64,22 @@ impl PipelineEvent {
         status: WorkflowStatus,
         message: impl Into<String>,
     ) -> Self {
-        Self {
+        let event = Self {
             kind: EventKind::WorkflowStatus,
             timestamp_ms: now_ms(),
             workflow: Some(workflow.into()),
             phase: Some(phase),
             status: Some(status),
             message: message.into(),
-        }
+        };
+        tracing::trace!(
+            workflow = ?event.workflow,
+            phase = ?event.phase,
+            status = ?event.status,
+            message = %event.message,
+            "created workflow status event"
+        );
+        event
     }
 
     pub fn log(
@@ -73,14 +87,21 @@ impl PipelineEvent {
         phase: WorkflowPhase,
         message: impl Into<String>,
     ) -> Self {
-        Self {
+        let event = Self {
             kind: EventKind::Log,
             timestamp_ms: now_ms(),
             workflow: Some(workflow.into()),
             phase: Some(phase),
             status: None,
             message: message.into(),
-        }
+        };
+        tracing::trace!(
+            workflow = ?event.workflow,
+            phase = ?event.phase,
+            message = %event.message,
+            "created workflow log event"
+        );
+        event
     }
 
     pub fn error(
@@ -88,14 +109,21 @@ impl PipelineEvent {
         phase: WorkflowPhase,
         message: impl Into<String>,
     ) -> Self {
-        Self {
+        let event = Self {
             kind: EventKind::Error,
             timestamp_ms: now_ms(),
             workflow: Some(workflow.into()),
             phase: Some(phase),
             status: Some(WorkflowStatus::Failed),
             message: message.into(),
-        }
+        };
+        tracing::trace!(
+            workflow = ?event.workflow,
+            phase = ?event.phase,
+            message = %event.message,
+            "created workflow error event"
+        );
+        event
     }
 }
 

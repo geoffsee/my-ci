@@ -513,6 +513,10 @@ select:focus-visible {
   transition: border-color 100ms ease;
 }
 
+.select--runtime select {
+  min-width: 190px;
+}
+
 .select select:hover {
   border-color: var(--fg-3);
 }
