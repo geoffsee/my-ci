@@ -157,6 +157,44 @@ impl HistoryStore {
         .context("failed to fetch run events")?;
         Ok(rows)
     }
+
+    /// Drop older runs and their events, keeping the `keep` most recent runs by primary key.
+    pub async fn prune_runs_keep_recent(&self, keep: i64) -> Result<()> {
+        if keep < 1 {
+            return Ok(());
+        }
+        let cut_id: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(id) FROM (SELECT id FROM runs ORDER BY id DESC LIMIT ?)",
+        )
+        .bind(keep)
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to resolve run ids to retain")?;
+
+        let Some(cut_id) = cut_id else {
+            return Ok(());
+        };
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to begin prune transaction")?;
+        sqlx::query("DELETE FROM run_events WHERE run_id < ?")
+            .bind(cut_id)
+            .execute(&mut *tx)
+            .await
+            .context("failed to prune old run events")?;
+        sqlx::query("DELETE FROM runs WHERE id < ?")
+            .bind(cut_id)
+            .execute(&mut *tx)
+            .await
+            .context("failed to prune old runs")?;
+        tx.commit()
+            .await
+            .context("failed to commit prune transaction")?;
+        Ok(())
+    }
 }
 
 fn kind_str(k: &EventKind) -> &'static str {
@@ -192,4 +230,35 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn prune_runs_keep_recent_drops_old_rows() {
+        let path = std::env::temp_dir().join(format!(
+            "my-ci-hist-prune-test-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_file(&path);
+        let store = HistoryStore::open(&path).await.unwrap();
+        let id1 = store.create_run("build", None).await.unwrap();
+        store.finish_run(id1, "succeeded").await.unwrap();
+        let id2 = store.create_run("build", None).await.unwrap();
+        store.finish_run(id2, "succeeded").await.unwrap();
+        let id3 = store.create_run("build", None).await.unwrap();
+        store.finish_run(id3, "succeeded").await.unwrap();
+        assert_eq!(store.list_runs(10).await.unwrap().len(), 3);
+        store.prune_runs_keep_recent(1).await.unwrap();
+        let runs = store.list_runs(10).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, id3);
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -14,6 +14,10 @@ use walkdir::WalkDir;
 
 use crate::config::{WorkflowConfig, WorkflowFile, image_tag, normalize_context};
 use crate::events::{PipelineEvent, WorkflowPhase, WorkflowStatus};
+use crate::image_gc::{
+    apple_inspect_image_digest, apple_supersede_prior_image, docker_inspect_image_id,
+    docker_supersede_prior_image,
+};
 use crate::oci::{OciRuntime, apple_container_command, exit_status_label, run_streaming_command};
 
 #[trace(level = "debug", skip(runtime, config, wf), err, fields(workflow = %wf.name))]
@@ -59,6 +63,7 @@ async fn build_workflow_with_docker(
 ) -> Result<()> {
     let context = normalize_context(&wf.context);
     let image_tag = image_tag(config, wf);
+    let prior_docker_id = docker_inspect_image_id(docker, &image_tag).await;
     info!(
         workflow = %wf.name,
         image = %image_tag,
@@ -117,6 +122,7 @@ async fn build_workflow_with_docker(
     }
 
     std::fs::remove_file(&tar_path).ok();
+    docker_supersede_prior_image(docker, &image_tag, prior_docker_id).await;
     info!(workflow = %wf.name, image = %image_tag, "Docker-compatible build completed");
     emit(PipelineEvent::workflow(
         wf.name.clone(),
@@ -135,6 +141,7 @@ async fn build_workflow_with_apple_container(
 ) -> Result<()> {
     let context = normalize_context(&wf.context);
     let image_tag = image_tag(config, wf);
+    let prior_apple_digest = apple_inspect_image_digest(&image_tag).await;
     info!(
         workflow = %wf.name,
         image = %image_tag,
@@ -193,6 +200,7 @@ async fn build_workflow_with_apple_container(
         );
     }
 
+    apple_supersede_prior_image(&image_tag, prior_apple_digest).await;
     info!(workflow = %wf.name, image = %image_tag, "Apple container build completed");
     emit(PipelineEvent::workflow(
         wf.name.clone(),

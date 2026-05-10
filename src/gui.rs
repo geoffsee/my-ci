@@ -211,6 +211,7 @@ async fn stop(State(state): State<AppState>) -> Json<PipelineResponse> {
                 warn!(error = %err, run_id, "failed to finalize cancelled run");
             }
         }
+        disk_cleanup_after_pipeline(state.history.as_ref()).await;
         return Json(PipelineResponse {
             accepted: true,
             message: "Pipeline cancelled".to_string(),
@@ -484,6 +485,16 @@ async fn run_pipeline(
     if let (Some(history), Some(run_id)) = (state.history.as_ref(), run_id) {
         if let Err(err) = history.finish_run(run_id, final_status).await {
             warn!(error = %err, run_id, "failed to finalize run");
+        }
+    }
+
+    disk_cleanup_after_pipeline(state.history.as_ref()).await;
+}
+
+async fn disk_cleanup_after_pipeline(history: Option<&HistoryStore>) {
+    if let Some(store) = history {
+        if let Err(err) = store.prune_runs_keep_recent(1).await {
+            warn!(error = %err, "failed to prune old run history");
         }
     }
 }

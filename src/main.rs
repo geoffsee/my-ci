@@ -5,6 +5,7 @@ mod events;
 mod graph;
 mod gui;
 mod history;
+mod image_gc;
 mod init;
 mod oci;
 mod run;

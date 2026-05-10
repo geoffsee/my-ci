@@ -20,3 +20,4 @@
 /ui/node_modules/
 /ui/dist/
 /.my-ci/history.db
+/.my-ci/last-built-image-ids.json

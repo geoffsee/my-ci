@@ -32,11 +32,8 @@ fn main() {
     let in_publish_verify = manifest_dir
         .components()
         .any(|c| c.as_os_str() == "package")
-        && manifest_dir
-            .components()
-            .any(|c| c.as_os_str() == "target");
-    let skip_bun =
-        std::env::var_os("MY_CI_SKIP_UI_BUILD").is_some() || in_publish_verify;
+        && manifest_dir.components().any(|c| c.as_os_str() == "target");
+    let skip_bun = std::env::var_os("MY_CI_SKIP_UI_BUILD").is_some() || in_publish_verify;
 
     let dist_ready = dist_dir.join("index.html").is_file();
 
