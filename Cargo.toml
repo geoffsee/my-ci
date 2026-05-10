@@ -6,7 +6,7 @@ my-ci-macros = { path = "crates/my-ci-macros", version = "0.0.2" }
 
 [package]
 name = "my-ci"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 license = "MIT"
 description = "Minimalist Local CICD"

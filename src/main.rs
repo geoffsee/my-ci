@@ -1,3 +1,4 @@
+mod artifacts;
 mod build;
 mod cli;
 mod config;

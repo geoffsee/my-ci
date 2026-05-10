@@ -11,8 +11,15 @@ pub struct WorkflowFile {
     pub name: String,
     #[serde(default)]
     pub env_file: Option<PathBuf>,
+    /// Host directory for workflow outputs (copied paths and bind mounts). Relative paths resolve against the config file directory.
+    #[serde(default = "default_artifacts_dir")]
+    pub artifacts_dir: PathBuf,
     #[serde(default)]
     pub workflow: Vec<WorkflowConfig>,
+}
+
+fn default_artifacts_dir() -> PathBuf {
+    PathBuf::from("artifacts")
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -27,6 +34,11 @@ pub struct WorkflowConfig {
     #[serde(default)]
     pub env: Vec<String>,
     pub command: Option<Vec<String>>,
+    /// POSIX paths inside the container to copy into `{artifacts_dir}/{workflow}/…` after a successful run (Docker/Podman).
+    #[serde(default)]
+    pub artifacts: Vec<String>,
+    /// If set, `{artifacts_dir}/{workflow}` on the host is bind-mounted here for every runtime (write-through artifacts).
+    pub artifact_bind: Option<String>,
 }
 
 #[trace(level = "debug", err, fields(path = %path.display()))]
@@ -56,6 +68,12 @@ pub fn load_config(path: &Path) -> Result<WorkflowFile> {
         dotenvy::from_path(&resolved)
             .with_context(|| format!("failed to load env_file at {}", resolved.display()))?;
     }
+
+    parsed.artifacts_dir = if parsed.artifacts_dir.is_absolute() {
+        parsed.artifacts_dir.clone()
+    } else {
+        config_dir.join(&parsed.artifacts_dir)
+    };
     for workflow in &mut parsed.workflow {
         debug!(workflow = %workflow.name, "hydrating workflow instructions");
         hydrate_instructions_from_containerfile(config_dir, workflow)?;
@@ -150,6 +168,8 @@ mod tests {
             depends_on: vec![],
             env: vec![],
             command: None,
+            artifacts: vec![],
+            artifact_bind: None,
         }
     }
 
@@ -164,6 +184,7 @@ mod tests {
         let cfg = WorkflowFile {
             name: "proj".into(),
             env_file: None,
+            artifacts_dir: PathBuf::from("/tmp/a"),
             workflow: vec![wf("build")],
         };
         assert_eq!(image_tag(&cfg, &cfg.workflow[0]), "proj:build");
@@ -174,6 +195,7 @@ mod tests {
         let cfg = WorkflowFile {
             name: "  ".into(),
             env_file: None,
+            artifacts_dir: PathBuf::from("/tmp/b"),
             workflow: vec![wf("step")],
         };
         assert_eq!(image_tag(&cfg, &cfg.workflow[0]), "my-ci:step");
@@ -186,6 +208,7 @@ mod tests {
         let cfg = WorkflowFile {
             name: "proj".into(),
             env_file: None,
+            artifacts_dir: PathBuf::from("/tmp/c"),
             workflow: vec![w],
         };
         assert_eq!(image_tag(&cfg, &cfg.workflow[0]), "custom:tag");
@@ -196,6 +219,7 @@ mod tests {
         let cfg = WorkflowFile {
             name: "p".into(),
             env_file: None,
+            artifacts_dir: PathBuf::from("/tmp/d"),
             workflow: vec![wf("a"), wf("b")],
         };
         assert_eq!(get_workflow(&cfg, "b").unwrap().name, "b");
@@ -231,6 +255,28 @@ mod tests {
         w.instructions = "notes.txt".into();
         hydrate_instructions_from_containerfile(&dir, &mut w).unwrap();
         assert_eq!(w.instructions, "notes.txt");
+    }
+
+    #[test]
+    fn load_config_resolves_artifacts_dir_relative_to_config_file() {
+        let dir = tempdir();
+        let cfg_path = dir.join("nested").join("workflows.toml");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &cfg_path,
+            r#"
+name = "demo"
+artifacts_dir = "build-products"
+
+[[workflow]]
+name = "a"
+instructions = "FROM busybox:latest\n"
+"#,
+        )
+        .unwrap();
+        let cfg = load_config(&cfg_path).unwrap();
+        let expected = cfg_path.parent().unwrap().join("build-products");
+        assert_eq!(cfg.artifacts_dir, expected);
     }
 
     #[test]

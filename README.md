@@ -67,17 +67,22 @@ RUST_LOG=my_ci=debug,bollard=warn my-ci --runtime docker build
 ## `workflows.toml` schema
 
 ```toml
-name      = "string"          # project name; used as image prefix (default "my-ci")
-env_file  = "path"             # optional; loaded via dotenvy before run, relative to config
+name          = "string"          # project name; used as image prefix (default "my-ci")
+env_file      = "path"             # optional; loaded via dotenvy before run, relative to config
+artifacts_dir = "path"             # optional; base directory for captured outputs (default "artifacts", relative to config)
 
 [[workflow]]
-name         = "string"        # required; unique
-context      = "path"          # build context; default "."
-instructions = "string"        # inline Containerfile OR path ending in .Containerfile
-image        = "string"        # optional override; default "{name}:{workflow.name}"
-depends_on   = ["string"]      # build order; topologically sorted
-env          = ["KEY=VALUE"]   # container env at run time
-command      = ["argv"]        # required to run; build-only if omitted
+name           = "string"        # required; unique
+context        = "path"          # build context; default "."
+instructions   = "string"        # inline Containerfile OR path ending in .Containerfile
+image          = "string"        # optional override; default "{name}:{workflow.name}"
+depends_on     = ["string"]      # build order; topologically sorted
+env            = ["KEY=VALUE"]   # container env at run time
+command        = ["argv"]        # required to run; build-only if omitted
+artifacts      = ["/out/report.txt"]  # optional; paths inside the container to copy after success (Docker/Podman)
+artifact_bind  = "/artifacts"    # optional; bind-mount `{artifacts_dir}/{workflow}` at this path (all runtimes)
 ```
+
+After a successful run, each path in `artifacts` is unpacked under `{artifacts_dir}/{workflow}/…` (one subdirectory per path, derived from the container path). With `artifact_bind`, writing files under that mount path lands directly on the host, which also works with Apple container.
 
 Dependencies build in topological order. A workflow without `command` is build-only and is skipped by `run`.

@@ -78,6 +78,8 @@ mod tests {
             depends_on: deps.iter().map(|s| s.to_string()).collect(),
             env: vec![],
             command: None,
+            artifacts: vec![],
+            artifact_bind: None,
         }
     }
 
@@ -85,6 +87,7 @@ mod tests {
         WorkflowFile {
             name: "test".into(),
             env_file: None,
+            artifacts_dir: PathBuf::from("/tmp/my-ci-graph-test-artifacts"),
             workflow: workflows,
         }
     }
