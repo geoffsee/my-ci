@@ -58,6 +58,39 @@ type LogEntry = {
   message: string;
 };
 
+type View = "live" | "history";
+
+type RunRecord = {
+  id: number;
+  started_at: number;
+  finished_at: number | null;
+  mode: string;
+  workflow: string | null;
+  status: string;
+};
+
+type RunEventRecord = {
+  id: number;
+  run_id: number;
+  timestamp_ms: number;
+  kind: EventKind;
+  workflow: string | null;
+  phase: string | null;
+  status: string | null;
+  message: string;
+};
+
+type StatsSummary = {
+  ok: number;
+  fail: number;
+  run: number;
+  pend: number;
+  idle: number;
+  skip: number;
+  total: number;
+  waiting: number;
+};
+
 const SIGNAL_BY_CONN: Record<ConnectionState, { code: string; klass: string }> =
   {
     "Connecting...": { code: "CON", klass: "signal--warn" },
@@ -95,6 +128,57 @@ function pad4(n: number): string {
 function formatTimestamp(ms: number): string {
   const d = new Date(ms);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
+}
+
+function formatRunStarted(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+function formatDuration(startedAt: number, finishedAt: number | null): string {
+  if (!finishedAt) return "—";
+  const ms = Math.max(0, finishedAt - startedAt);
+  if (ms < 1000) return `${ms}ms`;
+  const totalSeconds = Math.floor(ms / 1000);
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes === 0) {
+    const tenths = Math.floor((ms % 1000) / 100);
+    return `${seconds}.${tenths}s`;
+  }
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours === 0) {
+    return `${minutes}m ${pad2(seconds)}s`;
+  }
+  return `${hours}h ${pad2(minutes)}m`;
+}
+
+function levelForRunEvent(event: RunEventRecord): LogLevel {
+  if (event.kind === "error") return "error";
+  if (
+    event.kind === "pipeline-started" ||
+    event.kind === "pipeline-finished" ||
+    event.kind === "pipeline-cancelled"
+  )
+    return "pipeline";
+  if (event.kind === "workflow-status") return "status";
+  return "log";
+}
+
+function runStatusClass(status: string): string {
+  switch (status) {
+    case "succeeded":
+      return "run-pill--ok";
+    case "failed":
+      return "run-pill--fail";
+    case "running":
+      return "run-pill--run";
+    case "cancelled":
+      return "run-pill--warn";
+    default:
+      return "run-pill--idle";
+  }
 }
 
 function buildPrefix(
@@ -145,7 +229,17 @@ export default function App(): JSX.Element {
   const [eventCount, setEventCount] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
 
+  const [view, setView] = useState<View>("live");
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [runEvents, setRunEvents] = useState<RunEventRecord[]>([]);
+  const [runEventsLoading, setRunEventsLoading] = useState(false);
+  const [runEventsError, setRunEventsError] = useState<string | null>(null);
+
   const logsRef = useRef<HTMLDivElement>(null);
+  const runEventsRef = useRef<HTMLDivElement>(null);
   const browserPlatform = useMemo(() => detectBrowserPlatform(), []);
   const runtimeOptions =
     browserPlatform === "macos" ? MACOS_RUNTIME_OPTIONS : BASE_RUNTIME_OPTIONS;
@@ -160,7 +254,7 @@ export default function App(): JSX.Element {
     [workflows, statuses],
   );
 
-  const stats = useMemo(() => {
+  const stats = useMemo<StatsSummary>(() => {
     let ok = 0;
     let fail = 0;
     let run = 0;
@@ -329,6 +423,82 @@ export default function App(): JSX.Element {
     el.scrollTop = el.scrollHeight;
   }, [logs, autoScroll]);
 
+  async function loadRuns(): Promise<void> {
+    setRunsLoading(true);
+    setRunsError(null);
+    try {
+      const res = await fetch("/api/runs?limit=50");
+      if (res.status === 503) {
+        setRunsError("History disabled (no database).");
+        setRuns([]);
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as RunRecord[];
+      setRuns(data);
+      setSelectedRunId((current) => {
+        if (current != null && data.some((r) => r.id === current)) {
+          return current;
+        }
+        return data[0]?.id ?? null;
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setRunsError(msg);
+    } finally {
+      setRunsLoading(false);
+    }
+  }
+
+  async function loadRunEvents(runId: number): Promise<void> {
+    setRunEventsLoading(true);
+    setRunEventsError(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/events`);
+      if (res.status === 503) {
+        setRunEventsError("History disabled (no database).");
+        setRunEvents([]);
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as RunEventRecord[];
+      setRunEvents(data);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setRunEventsError(msg);
+    } finally {
+      setRunEventsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (view !== "history") return;
+    void loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== "history") return;
+    if (selectedRunId == null) {
+      setRunEvents([]);
+      return;
+    }
+    void loadRunEvents(selectedRunId);
+  }, [view, selectedRunId]);
+
+  useEffect(() => {
+    const el = runEventsRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (view !== "history") return;
+    if (running) return;
+    void loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
+
   async function command(path: string): Promise<void> {
     const workflow = selectedWorkflow || null;
     try {
@@ -339,6 +509,9 @@ export default function App(): JSX.Element {
       });
       const data = (await res.json()) as CommandResponse;
       appendLog("control", "CTRL", data.message);
+      if (path === "/api/build" || path === "/api/run") {
+        setView("live");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog("error", "CTRL", msg);
@@ -417,6 +590,29 @@ export default function App(): JSX.Element {
       </header>
 
       <div className="strip">
+        <div className="strip__group">
+          <span className="strip__label">VIEW</span>
+          <div className="tabs" role="tablist" aria-label="Console view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "live"}
+              className={`tab${view === "live" ? " tab--active" : ""}`}
+              onClick={() => setView("live")}
+            >
+              LIVE
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "history"}
+              className={`tab${view === "history" ? " tab--active" : ""}`}
+              onClick={() => setView("history")}
+            >
+              HISTORY
+            </button>
+          </div>
+        </div>
         <div className="strip__group">
           <span className="strip__label">TARGET</span>
           <div className="select">
@@ -510,158 +706,30 @@ export default function App(): JSX.Element {
       </div>
 
       <main className="main">
-        <section className="panel panel--graph">
-          <div className="panel__head">
-            <div className="panel__title">
-              <span className="panel__bracket">[</span>
-              <h2>PIPELINE</h2>
-              <span className="panel__bracket">]</span>
-              <span className="panel__sublabel">topological order</span>
-            </div>
-            <div className="counts" aria-label="Workflow counts">
-              <span className="count count--ok" title="Succeeded">
-                <i aria-hidden="true" />
-                {pad2(stats.ok)}
-              </span>
-              <span className="count count--run" title="Running">
-                <i aria-hidden="true" />
-                {pad2(stats.run)}
-              </span>
-              <span className="count count--fail" title="Failed">
-                <i aria-hidden="true" />
-                {pad2(stats.fail)}
-              </span>
-              <span className="count count--idle" title="Idle / pending">
-                <i aria-hidden="true" />
-                {pad2(stats.waiting)}
-              </span>
-            </div>
-          </div>
-
-          <div className="graph" role="list">
-            {renderedWorkflows.length === 0 ? (
-              <div className="empty-card">
-                <span className="empty-card__cursor">▌</span>
-                <span>NO WORKFLOWS · check workflows.toml</span>
-              </div>
-            ) : (
-              renderedWorkflows.map((wf) => {
-                const idx = `W${pad2(wf.index + 1)}`;
-                const flag = wf.command ? "RUN" : "BUILD";
-                return (
-                  <article
-                    key={wf.name}
-                    className={`node node--${wf.status}`}
-                    role="listitem"
-                  >
-                    <div className="node__rail">
-                      <div className="node__index">{idx}</div>
-                      <div className="node__led" aria-hidden="true">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                    </div>
-                    <div className="node__body">
-                      <div className="node__head">
-                        <div className="node__name">{wf.name}</div>
-                        <div className="node__flags">
-                          <span className={`flag flag--${flag.toLowerCase()}`}>
-                            {flag}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="node__meta">
-                        <span className="meta-key">img</span>
-                        <span className="meta-val">{wf.image}</span>
-                      </div>
-                      <div className="node__meta">
-                        <span className="meta-key">dep</span>
-                        <span className="meta-val">
-                          {wf.depends_on.length === 0 ? (
-                            <span className="meta-dim">— none</span>
-                          ) : (
-                            wf.depends_on.map((d) => (
-                              <span key={d} className="dep-pill">
-                                <span
-                                  className="dep-pill__arrow"
-                                  aria-hidden="true"
-                                >
-                                  ←
-                                </span>
-                                {d}
-                              </span>
-                            ))
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="node__status">
-                      <span className="node__status-dot" aria-hidden="true" />
-                      <span className="node__status-text">
-                        {String(wf.status).toUpperCase()}
-                      </span>
-                    </div>
-                  </article>
-                );
-              })
-            )}
-          </div>
-        </section>
-
-        <section className="panel panel--logs">
-          <div className="panel__head">
-            <div className="panel__title">
-              <span className="panel__bracket">[</span>
-              <h2>TELEMETRY</h2>
-              <span className="panel__bracket">]</span>
-              <span className="panel__sublabel">live event stream</span>
-            </div>
-            <div className="logs__head">
-              <span className="kv">
-                <span className="kv__k">LINES</span>
-                <span className="kv__v">{pad4(logs.length)}</span>
-              </span>
-              <span className="kv">
-                <span className="kv__k">CLK</span>
-                <span className="kv__v">{clockText}</span>
-              </span>
-              <span
-                className={`kv kv--toggle ${autoScroll ? "kv--on" : "kv--off"}`}
-              >
-                <span className="kv__k">FLW</span>
-                <span className="kv__v">{autoScroll ? "ON" : "OFF"}</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="logs" ref={logsRef} onScroll={onLogsScroll}>
-            {logs.length === 0 ? (
-              <div className="logs__empty">
-                <span className="logs__empty-cursor">▌</span>
-                <span className="logs__empty-text">
-                  STANDING BY · awaiting pipeline events
-                </span>
-              </div>
-            ) : (
-              <ol className="loglines">
-                {logs.map((l) => (
-                  <li key={l.id} className={`logline logline--${l.level}`}>
-                    <span className="logline__ts">{formatTimestamp(l.ts)}</span>
-                    <span className="logline__sep" aria-hidden="true">
-                      │
-                    </span>
-                    <span className="logline__prefix">{l.prefix}</span>
-                    <span className="logline__sep" aria-hidden="true">
-                      │
-                    </span>
-                    <span className="logline__msg">{l.message}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-        </section>
+        {view === "history" ? (
+          <HistoryView
+            runs={runs}
+            runsLoading={runsLoading}
+            runsError={runsError}
+            selectedRunId={selectedRunId}
+            setSelectedRunId={setSelectedRunId}
+            runEvents={runEvents}
+            runEventsLoading={runEventsLoading}
+            runEventsError={runEventsError}
+            onRefreshRuns={() => void loadRuns()}
+            runEventsRef={runEventsRef}
+          />
+        ) : (
+          <LiveView
+            renderedWorkflows={renderedWorkflows}
+            stats={stats}
+            logs={logs}
+            logsRef={logsRef}
+            onLogsScroll={onLogsScroll}
+            autoScroll={autoScroll}
+            clockText={clockText}
+          />
+        )}
       </main>
 
       <footer className="statusbar">
@@ -677,6 +745,10 @@ export default function App(): JSX.Element {
           <span className="kv">
             <span className="kv__k">RT</span>
             <span className="kv__v">{runtimeLabel(selectedRuntime)}</span>
+          </span>
+          <span className="kv">
+            <span className="kv__k">VIEW</span>
+            <span className="kv__v">{view === "history" ? "HIST" : "LIVE"}</span>
           </span>
         </div>
         <div className="statusbar__group statusbar__group--center">
@@ -709,5 +781,388 @@ export default function App(): JSX.Element {
         </div>
       </footer>
     </div>
+  );
+}
+
+type LiveViewProps = {
+  renderedWorkflows: RenderedWorkflow[];
+  stats: StatsSummary;
+  logs: LogEntry[];
+  logsRef: { current: HTMLDivElement | null };
+  onLogsScroll: (e: JSX.TargetedEvent<HTMLDivElement>) => void;
+  autoScroll: boolean;
+  clockText: string;
+};
+
+function LiveView(props: LiveViewProps): JSX.Element {
+  const {
+    renderedWorkflows,
+    stats,
+    logs,
+    logsRef,
+    onLogsScroll,
+    autoScroll,
+    clockText,
+  } = props;
+  return (
+    <>
+      <section className="panel panel--graph">
+        <div className="panel__head">
+          <div className="panel__title">
+            <span className="panel__bracket">[</span>
+            <h2>PIPELINE</h2>
+            <span className="panel__bracket">]</span>
+            <span className="panel__sublabel">topological order</span>
+          </div>
+          <div className="counts" aria-label="Workflow counts">
+            <span className="count count--ok" title="Succeeded">
+              <i aria-hidden="true" />
+              {pad2(stats.ok)}
+            </span>
+            <span className="count count--run" title="Running">
+              <i aria-hidden="true" />
+              {pad2(stats.run)}
+            </span>
+            <span className="count count--fail" title="Failed">
+              <i aria-hidden="true" />
+              {pad2(stats.fail)}
+            </span>
+            <span className="count count--idle" title="Idle / pending">
+              <i aria-hidden="true" />
+              {pad2(stats.waiting)}
+            </span>
+          </div>
+        </div>
+
+        <div className="graph" role="list">
+          {renderedWorkflows.length === 0 ? (
+            <div className="empty-card">
+              <span className="empty-card__cursor">▌</span>
+              <span>NO WORKFLOWS · check workflows.toml</span>
+            </div>
+          ) : (
+            renderedWorkflows.map((wf) => {
+              const idx = `W${pad2(wf.index + 1)}`;
+              const flag = wf.command ? "RUN" : "BUILD";
+              return (
+                <article
+                  key={wf.name}
+                  className={`node node--${wf.status}`}
+                  role="listitem"
+                >
+                  <div className="node__rail">
+                    <div className="node__index">{idx}</div>
+                    <div className="node__led" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </div>
+                  <div className="node__body">
+                    <div className="node__head">
+                      <div className="node__name">{wf.name}</div>
+                      <div className="node__flags">
+                        <span className={`flag flag--${flag.toLowerCase()}`}>
+                          {flag}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="node__meta">
+                      <span className="meta-key">img</span>
+                      <span className="meta-val">{wf.image}</span>
+                    </div>
+                    <div className="node__meta">
+                      <span className="meta-key">dep</span>
+                      <span className="meta-val">
+                        {wf.depends_on.length === 0 ? (
+                          <span className="meta-dim">— none</span>
+                        ) : (
+                          wf.depends_on.map((d) => (
+                            <span key={d} className="dep-pill">
+                              <span
+                                className="dep-pill__arrow"
+                                aria-hidden="true"
+                              >
+                                ←
+                              </span>
+                              {d}
+                            </span>
+                          ))
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="node__status">
+                    <span className="node__status-dot" aria-hidden="true" />
+                    <span className="node__status-text">
+                      {String(wf.status).toUpperCase()}
+                    </span>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      <section className="panel panel--logs">
+        <div className="panel__head">
+          <div className="panel__title">
+            <span className="panel__bracket">[</span>
+            <h2>TELEMETRY</h2>
+            <span className="panel__bracket">]</span>
+            <span className="panel__sublabel">live event stream</span>
+          </div>
+          <div className="logs__head">
+            <span className="kv">
+              <span className="kv__k">LINES</span>
+              <span className="kv__v">{pad4(logs.length)}</span>
+            </span>
+            <span className="kv">
+              <span className="kv__k">CLK</span>
+              <span className="kv__v">{clockText}</span>
+            </span>
+            <span
+              className={`kv kv--toggle ${autoScroll ? "kv--on" : "kv--off"}`}
+            >
+              <span className="kv__k">FLW</span>
+              <span className="kv__v">{autoScroll ? "ON" : "OFF"}</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="logs" ref={logsRef} onScroll={onLogsScroll}>
+          {logs.length === 0 ? (
+            <div className="logs__empty">
+              <span className="logs__empty-cursor">▌</span>
+              <span className="logs__empty-text">
+                STANDING BY · awaiting pipeline events
+              </span>
+            </div>
+          ) : (
+            <ol className="loglines">
+              {logs.map((l) => (
+                <li key={l.id} className={`logline logline--${l.level}`}>
+                  <span className="logline__ts">{formatTimestamp(l.ts)}</span>
+                  <span className="logline__sep" aria-hidden="true">
+                    │
+                  </span>
+                  <span className="logline__prefix">{l.prefix}</span>
+                  <span className="logline__sep" aria-hidden="true">
+                    │
+                  </span>
+                  <span className="logline__msg">{l.message}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+type HistoryViewProps = {
+  runs: RunRecord[];
+  runsLoading: boolean;
+  runsError: string | null;
+  selectedRunId: number | null;
+  setSelectedRunId: (id: number) => void;
+  runEvents: RunEventRecord[];
+  runEventsLoading: boolean;
+  runEventsError: string | null;
+  onRefreshRuns: () => void;
+  runEventsRef: { current: HTMLDivElement | null };
+};
+
+function HistoryView(props: HistoryViewProps): JSX.Element {
+  const {
+    runs,
+    runsLoading,
+    runsError,
+    selectedRunId,
+    setSelectedRunId,
+    runEvents,
+    runEventsLoading,
+    runEventsError,
+    onRefreshRuns,
+    runEventsRef,
+  } = props;
+
+  const selectedRun = useMemo(
+    () => runs.find((r) => r.id === selectedRunId) ?? null,
+    [runs, selectedRunId],
+  );
+
+  return (
+    <>
+      <section className="panel panel--runs">
+        <div className="panel__head">
+          <div className="panel__title">
+            <span className="panel__bracket">[</span>
+            <h2>RUNS</h2>
+            <span className="panel__bracket">]</span>
+            <span className="panel__sublabel">recorded pipelines</span>
+          </div>
+          <div className="logs__head">
+            <span className="kv">
+              <span className="kv__k">N</span>
+              <span className="kv__v">{pad4(runs.length)}</span>
+            </span>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={onRefreshRuns}
+              disabled={runsLoading}
+            >
+              {runsLoading ? "LOADING…" : "REFRESH"}
+            </button>
+          </div>
+        </div>
+
+        <div className="runs" role="list">
+          {runsError ? (
+            <div className="empty-card">
+              <span className="empty-card__cursor">!</span>
+              <span>{runsError}</span>
+            </div>
+          ) : runs.length === 0 && !runsLoading ? (
+            <div className="empty-card">
+              <span className="empty-card__cursor">▌</span>
+              <span>NO RUNS · trigger a build or run</span>
+            </div>
+          ) : (
+            runs.map((run) => {
+              const isActive = run.id === selectedRunId;
+              const target = run.workflow ?? "[ALL]";
+              return (
+                <button
+                  type="button"
+                  key={run.id}
+                  className={`run-row${isActive ? " run-row--active" : ""}`}
+                  onClick={() => setSelectedRunId(run.id)}
+                  role="listitem"
+                >
+                  <div className="run-row__rail">
+                    <div className="run-row__id">#{run.id}</div>
+                    <div className={`run-row__mode mode--${run.mode}`}>
+                      {run.mode.toUpperCase()}
+                    </div>
+                  </div>
+                  <div className="run-row__body">
+                    <div className="run-row__head">
+                      <span className="run-row__target">{target}</span>
+                      <span className={`run-pill ${runStatusClass(run.status)}`}>
+                        {run.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="run-row__meta">
+                      <span className="meta-key">when</span>
+                      <span className="meta-val">
+                        {formatRunStarted(run.started_at)}
+                      </span>
+                    </div>
+                    <div className="run-row__meta">
+                      <span className="meta-key">dur</span>
+                      <span className="meta-val">
+                        {formatDuration(run.started_at, run.finished_at)}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      <section className="panel panel--logs">
+        <div className="panel__head">
+          <div className="panel__title">
+            <span className="panel__bracket">[</span>
+            <h2>EVENTS</h2>
+            <span className="panel__bracket">]</span>
+            <span className="panel__sublabel">
+              {selectedRun
+                ? `run #${selectedRun.id} · ${selectedRun.mode}`
+                : "select a run"}
+            </span>
+          </div>
+          <div className="logs__head">
+            <span className="kv">
+              <span className="kv__k">LINES</span>
+              <span className="kv__v">{pad4(runEvents.length)}</span>
+            </span>
+            {selectedRun && (
+              <span className="kv">
+                <span className="kv__k">DUR</span>
+                <span className="kv__v">
+                  {formatDuration(
+                    selectedRun.started_at,
+                    selectedRun.finished_at,
+                  )}
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="logs" ref={runEventsRef}>
+          {runEventsError ? (
+            <div className="logs__empty">
+              <span className="logs__empty-cursor">!</span>
+              <span className="logs__empty-text">{runEventsError}</span>
+            </div>
+          ) : runEventsLoading ? (
+            <div className="logs__empty">
+              <span className="logs__empty-cursor">▌</span>
+              <span className="logs__empty-text">LOADING EVENTS…</span>
+            </div>
+          ) : selectedRunId == null ? (
+            <div className="logs__empty">
+              <span className="logs__empty-cursor">▌</span>
+              <span className="logs__empty-text">SELECT A RUN</span>
+            </div>
+          ) : runEvents.length === 0 ? (
+            <div className="logs__empty">
+              <span className="logs__empty-cursor">▌</span>
+              <span className="logs__empty-text">NO EVENTS RECORDED</span>
+            </div>
+          ) : (
+            <ol className="loglines">
+              {runEvents.map((event) => {
+                const level = levelForRunEvent(event);
+                const prefix =
+                  event.kind === "pipeline-started" ||
+                  event.kind === "pipeline-finished" ||
+                  event.kind === "pipeline-cancelled"
+                    ? "PIPELINE"
+                    : event.kind === "error"
+                      ? "ERROR"
+                      : buildPrefix(event.phase, event.workflow);
+                return (
+                  <li
+                    key={event.id}
+                    className={`logline logline--${level}`}
+                  >
+                    <span className="logline__ts">
+                      {formatTimestamp(event.timestamp_ms)}
+                    </span>
+                    <span className="logline__sep" aria-hidden="true">
+                      │
+                    </span>
+                    <span className="logline__prefix">{prefix}</span>
+                    <span className="logline__sep" aria-hidden="true">
+                      │
+                    </span>
+                    <span className="logline__msg">{event.message}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+      </section>
+    </>
   );
 }

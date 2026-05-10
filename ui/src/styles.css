@@ -1379,6 +1379,251 @@ select:focus-visible {
 }
 
 /* =========================================================================
+   tabs (view switcher)
+   ========================================================================= */
+
+.tabs {
+  display: inline-flex;
+  border: 1px solid var(--hairline-strong);
+  background: var(--bg-2);
+}
+
+.tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 6px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
+}
+
+.tab + .tab {
+  border-left: 1px solid var(--hairline-strong);
+}
+
+.tab:hover:not(.tab--active) {
+  color: var(--fg-0);
+  background: var(--bg-3);
+}
+
+.tab--active {
+  color: var(--bg-0);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(7, 8, 10, 0.6);
+}
+
+/* =========================================================================
+   history · runs list
+   ========================================================================= */
+
+.panel--runs {
+  background: var(--bg-0);
+}
+
+.runs {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 18px 22px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.run-row {
+  appearance: none;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 12px;
+  padding: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--hairline);
+  color: var(--fg-0);
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+  position: relative;
+}
+
+.run-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--fg-3);
+}
+
+.run-row:hover {
+  border-color: var(--hairline-strong);
+  background: var(--bg-2);
+}
+
+.run-row--active {
+  border-color: var(--accent);
+  background: linear-gradient(
+    90deg,
+    rgba(212, 255, 78, 0.07),
+    var(--bg-1) 60%
+  );
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 18px var(--accent-glow);
+}
+
+.run-row--active::before {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.run-row__rail {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 12px 0 12px 12px;
+  border-right: 1px solid var(--hairline);
+  justify-items: center;
+}
+
+.run-row__id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-1);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-row--active .run-row__id {
+  color: var(--accent);
+}
+
+.run-row__mode {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--fg-2);
+  text-transform: uppercase;
+}
+
+.run-row__mode.mode--build {
+  color: var(--fg-1);
+  border-color: var(--hairline-strong);
+}
+
+.run-row__mode.mode--run {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.run-row__body {
+  min-width: 0;
+  padding: 10px 12px 12px 0;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+}
+
+.run-row__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.run-row__target {
+  font-family: var(--font-cond);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.005em;
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-row__meta {
+  display: flex;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-row__meta .meta-key {
+  color: var(--fg-3);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  min-width: 30px;
+}
+
+.run-row__meta .meta-val {
+  color: var(--fg-1);
+}
+
+/* =========================================================================
+   run status pills
+   ========================================================================= */
+
+.run-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline-strong);
+  text-transform: uppercase;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+.run-pill--ok {
+  color: var(--ok);
+  border-color: rgba(154, 255, 92, 0.4);
+  background: rgba(154, 255, 92, 0.06);
+}
+
+.run-pill--fail {
+  color: var(--fail);
+  border-color: rgba(255, 84, 112, 0.4);
+  background: rgba(255, 84, 112, 0.06);
+}
+
+.run-pill--run {
+  color: var(--run);
+  border-color: rgba(92, 225, 230, 0.4);
+  background: rgba(92, 225, 230, 0.06);
+}
+
+.run-pill--warn {
+  color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.run-pill--idle {
+  color: var(--fg-2);
+}
+
+/* =========================================================================
    responsive
    ========================================================================= */
 
